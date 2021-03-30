@@ -14,6 +14,6 @@ this command will running the apps and open connection to your local postgresql.
 ```
 http://127.0.0.1:8080/user/{user_id}
 ```
-You can insert any user id, for now there are 2288 user ids on table script. You add or delete it on your local if you think it necessary.
+For now there are 2288 user ids on table script. You can add or delete it on your local if you think it necessary.
 
 Note : all data in this table is fictitious
