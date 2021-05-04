@@ -1,4 +1,4 @@
-package entity
+package user
 
 // UserProfile describe detail his/her profile
 type UserProfile struct {

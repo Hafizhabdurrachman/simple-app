@@ -1,16 +1,21 @@
 package database
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"log"
+	"time"
 
+	"github.com/go-redis/redis"
 	_ "github.com/lib/pq"
 
-	entityUser "github.com/simple-app/entity"
+	entityUser "github.com/simple-app/entity/user"
 )
 
 // GetUserProfile is function for getting detail profile from given user ID
-func GetUserProfile(userID int64, dbconn *sql.DB) (entityUser.UserProfile, error) {
+func GetUserProfile(ctx context.Context, userID int64, dbconn *sql.DB) (entityUser.UserProfile, error) {
 
 	userProfile := entityUser.UserProfile{}
 
@@ -57,7 +62,7 @@ func GetUserProfile(userID int64, dbconn *sql.DB) (entityUser.UserProfile, error
 }
 
 // GetUserFamily is function for getting detail family from given user ID
-func GetUserFamily(userID int64, dbconn *sql.DB) ([]entityUser.UserFamily, error) {
+func GetUserFamily(ctx context.Context, userID int64, dbconn *sql.DB) ([]entityUser.UserFamily, error) {
 
 	//verify connection
 	err := dbconn.Ping()
@@ -76,7 +81,7 @@ func GetUserFamily(userID int64, dbconn *sql.DB) ([]entityUser.UserFamily, error
 			user_id = $1
 	`
 
-	rows, err := dbconn.Query(query, userID)
+	rows, err := dbconn.QueryContext(ctx, query, userID)
 	if err != nil {
 		log.Println("failed when get data from table user_family, cause :  ", err)
 		return nil, err
@@ -103,7 +108,7 @@ func GetUserFamily(userID int64, dbconn *sql.DB) ([]entityUser.UserFamily, error
 }
 
 // GetUserTransportation is function for getting detail transportation from given user ID
-func GetUserTransportation(userID int64, dbconn *sql.DB) ([]entityUser.UserTransportation, error) {
+func GetUserTransportation(ctx context.Context, userID int64, dbconn *sql.DB) ([]entityUser.UserTransportation, error) {
 
 	//verify connection
 	err := dbconn.Ping()
@@ -123,7 +128,7 @@ func GetUserTransportation(userID int64, dbconn *sql.DB) ([]entityUser.UserTrans
 			user_id = $1
 	`
 
-	rows, err := dbconn.Query(query, userID)
+	rows, err := dbconn.QueryContext(ctx, query, userID)
 	if err != nil {
 		log.Println("failed when get data from table user_transportation, cause :  ", err)
 		return nil, err
@@ -147,4 +152,28 @@ func GetUserTransportation(userID int64, dbconn *sql.DB) ([]entityUser.UserTrans
 	}
 
 	return userTransportations, nil
+}
+
+// GetCacheUserData is function for fet data from redis by given key
+func GetCacheUserData(ctx context.Context, redis *redis.Client, key string, userID int64) (stringData string, err error) {
+
+	// create key redis
+	keyRedis := fmt.Sprintf(key, userID)
+
+	return redis.Get(ctx, keyRedis).Result()
+}
+
+// SetCacheUserData is function for set data to redis
+func SetCacheUserData(ctx context.Context, redis *redis.Client, key string, userID int64, data interface{}, expiredTime time.Duration) error {
+
+	// create key redis
+	keyRedis := fmt.Sprintf(key, userID)
+
+	// marshaling data
+	json, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	return redis.SetEX(ctx, keyRedis, json, expiredTime).Err()
 }
