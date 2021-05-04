@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -9,22 +10,17 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/go-redis/redis"
 	"github.com/gorilla/mux"
 	"github.com/simple-app/database"
-	"github.com/simple-app/entity"
-)
-
-// connection postgresql const
-const (
-	host     = "127.0.0.1"
-	port     = 5432
-	user     = "yourUserDB"  // default user: postgres
-	password = "yourPassDB"   // you can set your own password
-	dbname   = "yourNameDB" // your dbname
+	entityPostgresql "github.com/simple-app/entity/postgresql"
+	entityRedis "github.com/simple-app/entity/redis"
+	entityUser "github.com/simple-app/entity/user"
 )
 
 type handlerUser struct {
-	db *sql.DB
+	db    *sql.DB
+	redis *redis.Client
 }
 
 // TrackerDuration execution
@@ -48,21 +44,31 @@ func (h *handlerUser) GetUserDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userProfile, err := h.GetUserProfile(id)
+	// This is the option when you want to compare the performance
+	// set true to using cache (using redis first)
+	// set false to not using cache (purely psotgresql)
+	useCache := true
+
+	// We set context with timeout, so if the duration for calling this function
+	// is more then how it set, it would be timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	userProfile, err := h.GetUserProfile(ctx, id, useCache)
 	if err != nil {
 		json.NewEncoder(w).Encode(err)
 		return
 	}
 	TrackerDuration(startTime, "GetUserProfile")
 
-	userFamily, err := h.GetUserFamily(id)
+	userFamily, err := h.GetUserFamily(ctx, id, useCache)
 	if err != nil {
 		json.NewEncoder(w).Encode(err)
 		return
 	}
 	TrackerDuration(startTime, "GetUserFamily")
 
-	userTransportation, err := h.GetUserTransportation(id)
+	userTransportation, err := h.GetUserTransportation(ctx, id, useCache)
 	if err != nil {
 		json.NewEncoder(w).Encode(err)
 		return
@@ -70,7 +76,7 @@ func (h *handlerUser) GetUserDetail(w http.ResponseWriter, r *http.Request) {
 	TrackerDuration(startTime, "GetUserTransportation")
 
 	//aggregate data user detail
-	userDetail := entity.UserDetail{}
+	userDetail := entityUser.UserDetail{}
 	userDetail.Profile = userProfile
 	userDetail.Family = userFamily
 	userDetail.Transportation = userTransportation
@@ -80,19 +86,128 @@ func (h *handlerUser) GetUserDetail(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-// GetUserProfile from DB
-func (h *handlerUser) GetUserProfile(userID int64) (entity.UserProfile, error) {
-	return database.GetUserProfile(userID, h.db)
+// GetUserProfile detail data user profile
+func (h *handlerUser) GetUserProfile(ctx context.Context, userID int64, useCache bool) (entityUser.UserProfile, error) {
+
+	var (
+		userProfile entityUser.UserProfile
+		err         error
+	)
+
+	if useCache {
+		// get data from cache redis
+		strData, err := database.GetCacheUserData(ctx, h.redis, entityRedis.UserProfile, userID)
+		if err != nil && err != redis.Nil {
+			log.Println("error getting data user profile from redis :  ", err)
+		}
+
+		if strData != "" {
+			err = json.Unmarshal([]byte(strData), &userProfile)
+			if err == nil {
+				return userProfile, err
+			}
+			log.Println("error getting data user profile when unmarshal struct :  ", err)
+		}
+	}
+
+	// get data from DB
+	userProfile, err = database.GetUserProfile(ctx, userID, h.db)
+	if err != nil {
+		return userProfile, err
+	}
+
+	if useCache {
+		// set data on redis
+		err = database.SetCacheUserData(ctx, h.redis, entityRedis.UserProfile, userID, userProfile, entityRedis.SetTimeExp)
+		if err != nil {
+			log.Println("error when set data user profile on redis :  ", err)
+		}
+
+	}
+
+	return userProfile, nil
 }
 
-// GetUserFamily from DB
-func (h *handlerUser) GetUserFamily(userID int64) ([]entity.UserFamily, error) {
-	return database.GetUserFamily(userID, h.db)
+// GetUserFamily detail data user family
+func (h *handlerUser) GetUserFamily(ctx context.Context, userID int64, useCache bool) ([]entityUser.UserFamily, error) {
+
+	var (
+		userFamilies []entityUser.UserFamily
+		err          error
+	)
+
+	if useCache {
+		// get data from cache redis
+		strData, err := database.GetCacheUserData(ctx, h.redis, entityRedis.UserFamily, userID)
+		if err != nil && err != redis.Nil {
+			log.Println("error getting data user family from redis :  ", err)
+		}
+
+		if strData != "" {
+			err = json.Unmarshal([]byte(strData), &userFamilies)
+			if err == nil {
+				return userFamilies, err
+			}
+			log.Println("error getting data user family when unmarshal struct :  ", err)
+		}
+	}
+
+	// get data from DB
+	userFamilies, err = database.GetUserFamily(ctx, userID, h.db)
+	if err != nil {
+		return userFamilies, err
+	}
+
+	if useCache {
+		// set data on redis
+		err = database.SetCacheUserData(ctx, h.redis, entityRedis.UserFamily, userID, userFamilies, entityRedis.SetTimeExp)
+		if err != nil {
+			log.Println("error when set data user family on redis :  ", err)
+		}
+	}
+
+	return userFamilies, nil
 }
 
-// GetUserTransportation from DB
-func (h *handlerUser) GetUserTransportation(userID int64) ([]entity.UserTransportation, error) {
-	return database.GetUserTransportation(userID, h.db)
+// GetUserTransportation detail data user transportation
+func (h *handlerUser) GetUserTransportation(ctx context.Context, userID int64, useCache bool) ([]entityUser.UserTransportation, error) {
+
+	var (
+		userTransportations []entityUser.UserTransportation
+		err                 error
+	)
+
+	if useCache {
+		// get data from cache redis
+		strData, err := database.GetCacheUserData(ctx, h.redis, entityRedis.UserTransportation, userID)
+		if err != nil && err != redis.Nil {
+			log.Println("error getting data user transportation from redis :  ", err)
+		}
+
+		if strData != "" {
+			err = json.Unmarshal([]byte(strData), &userTransportations)
+			if err == nil {
+				return userTransportations, err
+			}
+			log.Println("error getting data user transportation when unmarshal struct :  ", err)
+		}
+	}
+
+	// get data from DB
+	userTransportations, err = database.GetUserTransportation(ctx, userID, h.db)
+	if err != nil {
+		return userTransportations, err
+	}
+
+	if useCache {
+		// set data on redis
+		err = database.SetCacheUserData(ctx, h.redis, entityRedis.UserTransportation, userID, userTransportations, entityRedis.SetTimeExp)
+		if err != nil {
+			log.Println("error when set data user transportation on redis :  ", err)
+		}
+	}
+
+	return userTransportations, nil
 }
 
 func handleRequests(h *handlerUser) {
@@ -106,7 +221,7 @@ func main() {
 	// create string conection for psql
 	psql := fmt.Sprintf("host=%s port=%d user=%s "+
 		"password=%s dbname=%s sslmode=disable",
-		host, port, user, password, dbname)
+		entityPostgresql.Host, entityPostgresql.Port, entityPostgresql.User, entityPostgresql.Password, entityPostgresql.DBname)
 
 	// connect to DB
 	dbconn, err := sql.Open("postgres", psql)
@@ -116,8 +231,20 @@ func main() {
 	}
 	defer dbconn.Close()
 
+	// string address for redis
+	redisAddr := fmt.Sprintf("%s:%d",
+		entityRedis.Host, entityRedis.Port)
+
+	// connect to Redis
+	rediClient := redis.NewClient(&redis.Options{
+		Addr:     redisAddr,
+		Password: "",
+		DB:       0,
+	})
+
 	handler := &handlerUser{
-		db: dbconn,
+		db:    dbconn,
+		redis: rediClient,
 	}
 
 	fmt.Println("===== || Starting Apps ||=====")
