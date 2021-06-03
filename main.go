@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-redis/redis"
@@ -54,26 +55,71 @@ func (h *handlerUser) GetUserDetail(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	userProfile, err := h.GetUserProfile(ctx, id, useCache)
-	if err != nil {
-		json.NewEncoder(w).Encode(err)
-		return
-	}
-	TrackerDuration(startTime, "GetUserProfile")
+	var (
+		errs               = []error{}
+		wg                 = sync.WaitGroup{}
+		mux                = sync.Mutex{}
+		userProfile        entityUser.UserProfile
+		userFamily         []entityUser.UserFamily
+		userTransportation []entityUser.UserTransportation
+	)
 
-	userFamily, err := h.GetUserFamily(ctx, id, useCache)
-	if err != nil {
-		json.NewEncoder(w).Encode(err)
-		return
-	}
-	TrackerDuration(startTime, "GetUserFamily")
+	// parallel process for user profile
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		userProfile, err = h.GetUserProfile(ctx, id, useCache)
+		if err != nil {
+			// locking process while append error to array of errors
+			mux.Lock()
+			errs = append(errs, err)
+			mux.Unlock()
+			return
+		}
+		TrackerDuration(startTime, "GetUserProfile")
 
-	userTransportation, err := h.GetUserTransportation(ctx, id, useCache)
-	if err != nil {
-		json.NewEncoder(w).Encode(err)
+	}()
+
+	// parallel process for user family
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		userFamily, err = h.GetUserFamily(ctx, id, useCache)
+		if err != nil {
+			// locking process while append error to array of errors
+			mux.Lock()
+			errs = append(errs, err)
+			mux.Unlock()
+			return
+		}
+		TrackerDuration(startTime, "GetUserFamily")
+
+	}()
+
+	// parallel process for user transportation
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		userTransportation, err = h.GetUserTransportation(ctx, id, useCache)
+		if err != nil {
+			// locking process while append error to array of errors
+			mux.Lock()
+			errs = append(errs, err)
+			mux.Unlock()
+			return
+		}
+		TrackerDuration(startTime, "GetUserTransportation")
+
+	}()
+
+	// waiting all data complete
+	// and check if there is any error
+	wg.Wait()
+	if len(errs) > 0 {
+		log.Println(errs)
+		json.NewEncoder(w).Encode(errs)
 		return
 	}
-	TrackerDuration(startTime, "GetUserTransportation")
 
 	//aggregate data user detail
 	userDetail := entityUser.UserDetail{}
