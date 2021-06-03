@@ -4,7 +4,7 @@ package postgresql
 const (
 	Host     = "127.0.0.1"
 	Port     = 5432
-	user     = "yourUserDB"  // default user: postgres
-	password = "yourPassDB"   // you can set your own password
-	dbname   = "yourNameDB" // your dbname
+	User     = "yourUserDB" // default user: postgres
+	Password = "yourPassDB" // you can set your own password
+	DBname   = "yourNameDB" // your dbname
 )
